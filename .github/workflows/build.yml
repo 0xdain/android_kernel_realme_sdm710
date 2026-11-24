@@ -18,9 +18,6 @@ on:
         required: true
         default: true
         type: boolean
-  push:
-    branches:
-      - 17-bpf-r5p-BakaSU
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
