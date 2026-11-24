@@ -1,0 +1,226 @@
+name: Build Yurei Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: "Kernel Base Name"
+        required: true
+        default: "Yurei"
+        type: string
+      kernel_variant:
+        description: "Kernel Variant / Edition"
+        required: true
+        default: "Ayakashi"
+        type: string
+      publish_release:
+        description: "Publish a GitHub release after successful build"
+        required: true
+        default: true
+        type: boolean
+  push:
+    branches:
+      - 17-bpf-r5p-BakaSU
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVICE_CODENAME: "RMX1971"
+  DEVICE_MODEL: "Realme 5 Pro / Realme Q"
+  KERNEL_DEFCONFIG: "sdm670-perf_defconfig"
+  KERNEL_IMAGE: "Image.gz-dtb"
+  PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
+  ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
+  ANYKERNEL_BRANCH: "r5p"
+  KBUILD_BUILD_USER: "@d_ai_n"
+  KBUILD_BUILD_HOST: "ubuntu-24.04"
+
+jobs:
+  build:
+    name: Build Kernel (${{ inputs.kernel_variant || 'Ayakashi' }})
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 0
+
+      - name: Set up Build Metadata
+        id: vars
+        run: |
+          K_NAME="${{ inputs.kernel_name || 'Yurei' }}"
+          K_VAR="${{ inputs.kernel_variant || 'Ayakashi' }}"
+          BUILD_DATE=$(date -u +%Y%m%d-%H%M)
+          BUILD_TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+
+          echo "KERNEL_NAME=${K_NAME}" >> $GITHUB_ENV
+          echo "KERNEL_VARIANT=${K_VAR}" >> $GITHUB_ENV
+          echo "BUILD_DATE=${BUILD_DATE}" >> $GITHUB_ENV
+          echo "BUILD_TIMESTAMP=${BUILD_TIMESTAMP}" >> $GITHUB_ENV
+          echo "COMMIT_HASH=${COMMIT_HASH}" >> $GITHUB_ENV
+
+      - name: Restore Ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: ${{ runner.os }}-sdm670-clang
+          max-size: 10G
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache cpio flex git libelf-dev lld \
+            libncurses5-dev libssl-dev make rsync unzip zip python3 python-is-python3
+
+      - name: Set up Proton-Clang Toolchain
+        run: |
+          git clone --depth 1 $PROTON_CLANG_REPO .deps/proton-clang
+          # Remove outdated host GNU linkers to avoid GLIBC compatibility issues on Ubuntu 24.04
+          rm -f .deps/proton-clang/bin/ld .deps/proton-clang/bin/ld.bfd .deps/proton-clang/bin/ld.gold
+
+      - name: Set up AnyKernel3
+        run: |
+          git clone --depth 1 -b $ANYKERNEL_BRANCH $ANYKERNEL_REPO .deps/AnyKernel3
+
+      - name: Configure Kernel
+        run: |
+          mkdir -p out
+          TC_PATH="${{ github.workspace }}/.deps/proton-clang/bin"
+          export HOSTCFLAGS="-Wno-unused-command-line-argument"
+
+          make O=out ARCH=arm64 \
+            CC="$TC_PATH/clang" \
+            CROSS_COMPILE="$TC_PATH/aarch64-linux-gnu-" \
+            $KERNEL_DEFCONFIG
+
+          # Configure custom localversion string (-Yurei-Ayakashi)
+          ./scripts/config --file out/.config \
+            --set-str CONFIG_LOCALVERSION "-${KERNEL_NAME}-${KERNEL_VARIANT}"
+
+          make O=out ARCH=arm64 \
+            CC="$TC_PATH/clang" \
+            CROSS_COMPILE="$TC_PATH/aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="$TC_PATH/arm-linux-gnueabi-" \
+            olddefconfig
+
+      - name: Compile Kernel
+        id: compile
+        run: |
+          TC_PATH="${{ github.workspace }}/.deps/proton-clang/bin"
+          export HOSTCFLAGS="-Wno-unused-command-line-argument"
+
+          echo "::group::Build Information"
+          echo "Compiler: $($TC_PATH/clang --version | head -n 1)"
+          echo "Kernel: Linux $(make kernelversion)"
+          echo "Target Config: $KERNEL_DEFCONFIG"
+          echo "Jobs: $(nproc --all)"
+          echo "::endgroup::"
+
+          START_TIME=$(date +%s)
+
+          make -j$(nproc --all) O=out ARCH=arm64 \
+            CC="ccache $TC_PATH/clang" \
+            LD="$TC_PATH/ld.lld" \
+            AR="$TC_PATH/llvm-ar" \
+            NM="$TC_PATH/llvm-nm" \
+            OBJCOPY="$TC_PATH/llvm-objcopy" \
+            OBJDUMP="$TC_PATH/llvm-objdump" \
+            READELF="$TC_PATH/llvm-readelf" \
+            STRIP="$TC_PATH/llvm-strip" \
+            CROSS_COMPILE="$TC_PATH/aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="$TC_PATH/arm-linux-gnueabi-" \
+            LLVM=1 LLVM_IAS=1
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "Kernel compiled successfully in $((DURATION / 60))m $((DURATION % 60))s"
+
+      - name: Package AnyKernel3 Flashable ZIP
+        id: package
+        run: |
+          mkdir -p artifacts
+
+          if [ ! -f "out/arch/arm64/boot/$KERNEL_IMAGE" ]; then
+            echo "::error::Kernel image out/arch/arm64/boot/$KERNEL_IMAGE not found!"
+            exit 1
+          fi
+
+          cp out/arch/arm64/boot/$KERNEL_IMAGE artifacts/
+          cp out/.config artifacts/kernel.config
+
+          mkdir -p .deps/AnyKernel3_staging
+          cp -r .deps/AnyKernel3/* .deps/AnyKernel3_staging/
+          cp out/arch/arm64/boot/$KERNEL_IMAGE .deps/AnyKernel3_staging/
+
+          ZIP_NAME="${KERNEL_NAME}-${KERNEL_VARIANT}-${DEVICE_CODENAME}-${BUILD_DATE}.zip"
+          TAG_NAME="${KERNEL_NAME}-${KERNEL_VARIANT}-${BUILD_DATE}"
+
+          cd .deps/AnyKernel3_staging
+          zip -r9 "../../artifacts/${ZIP_NAME}" . -x '.git*' 'README.md'
+          cd ../..
+
+          # Generate SHA256 checksums
+          cd artifacts
+          sha256sum "${ZIP_NAME}" > "${ZIP_NAME}.sha256"
+          sha256sum "${KERNEL_IMAGE}" > "${KERNEL_IMAGE}.sha256"
+          cd ..
+
+          echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
+          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: artifacts/*
+          if-no-files-found: error
+
+      - name: Generate Release Notes
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release == true }}
+        run: |
+          cat << EOF > release_body.md
+          # 👻 ${{ env.KERNEL_NAME }} Kernel — ${{ env.KERNEL_VARIANT }}
+
+          ### 📱 Device Information
+          - **Device**: ${{ env.DEVICE_MODEL }} (\`${{ env.DEVICE_CODENAME }}\`)
+          - **Kernel Version**: Linux 4.9.337 (\`sdm710\`)
+          - **Edition**: \`${{ env.KERNEL_VARIANT }}\`
+          - **Commit**: \`${{ env.COMMIT_HASH }}\`
+          - **Build Date**: \`${{ env.BUILD_TIMESTAMP }}\`
+
+          ---
+
+          ### 🌟 Key Highlights & Integrations
+          - 🛡️ **BakaSU Integration**: Next-generation root solution operating via clean inline VFS hooks.
+          - 🥷 **SUSFS v2.3.0 Cloaking**: Deep kernel-level mount & path spoofing with full anti-detection capabilities.
+          - ⚡ **Proton Clang Toolchain**: Optimized LLVM toolchain with full \`LLVM=1\` and \`LLVM_IAS=1\` integrated assembler support.
+          - 📦 **AnyKernel3 Flashable ZIP**: Standard recovery zip format flashable via TWRP, OrangeFox, PBRP.
+
+          ---
+
+          ### 🔐 SHA256 Checksum
+          \`\`\`
+          $(cat artifacts/${{ env.ZIP_NAME }}.sha256)
+          \`\`\`
+          EOF
+
+      - name: Publish GitHub Release
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release == true }}
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ env.TAG_NAME }}
+          name: "${{ env.KERNEL_NAME }} - ${{ env.KERNEL_VARIANT }} (${{ env.DEVICE_CODENAME }})"
+          body_path: release_body.md
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/${{ env.ZIP_NAME }}
+            artifacts/${{ env.ZIP_NAME }}.sha256
+            artifacts/kernel.config
