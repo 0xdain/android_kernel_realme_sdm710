@@ -13,6 +13,7 @@
 #define CMD_SUSFS_SET_ANDROID_DATA_ROOT_PATH 0x55551 /* deprecated */
 #define CMD_SUSFS_SET_SDCARD_ROOT_PATH 0x55552 /* deprecated */
 #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553
+#define CMD_SUSFS_SET_SUS_PATH_UID_FILTER 0x55554
 #define CMD_SUSFS_ADD_SUS_MOUNT 0x55560 /* deprecated */
 #define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x55561
 #define CMD_SUSFS_UMOUNT_FOR_ZYGOTE_ISO_SERVICE 0x55562 /* deprecated */
@@ -32,6 +33,9 @@
 #define CMD_SUSFS_SUS_SU 0x60000 /* deprecated */
 #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60010
 #define CMD_SUSFS_ADD_SUS_MAP 0x60020
+#define CMD_SUSFS_SET_PRIORITY_UID_FILTER 0x60030
+
+#define SUSFS_APP_STR_BUF_SIZE 65536
 
 #define SUSFS_MAX_LEN_PATHNAME 256 // 256 should address many paths already unless you are doing some strange experimental stuff, then set your own desired length
 #define SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE 8192 // 8192 is enough I guess
@@ -158,4 +162,14 @@ static inline void susfs_clear_current_proc_no_su(void) {
 		inode && inode->i_mapping && \
 		unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT, &inode->i_mapping->flags)) && \
 		susfs_is_current_proc_umounted_app()
+
+struct st_susfs_sus_path_uid_filter {
+	char app_strings[SUSFS_APP_STR_BUF_SIZE];
+	int err;
+};
+
+struct st_susfs_priority_uid_filter {
+	char app_strings[SUSFS_APP_STR_BUF_SIZE];
+	int err;
+};
 #endif // #ifndef KSU_SUSFS_DEF_H

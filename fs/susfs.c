@@ -1559,6 +1559,40 @@ void susfs_init(void) {\
 	SUSFS_LOGI("susfs is initialized! version: " SUSFS_VERSION " \n");
 }
 
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+void susfs_set_sus_path_uid_filter(void __user **user_info) {
+	int err = 0;
+	if (copy_to_user(&((struct st_susfs_sus_path_uid_filter __user*)*user_info)->err, &err, sizeof(err))) {
+		err = -EFAULT;
+	}
+	SUSFS_LOGI("CMD_SUSFS_SET_SUS_PATH_UID_FILTER -> ret: %d\n", err);
+}
+
+void susfs_parse_sus_path_app_strings(void) {
+}
+#endif
+
+#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
+void susfs_set_priority_uid_filter(void __user **user_info) {
+	int err = 0;
+	if (copy_to_user(&((struct st_susfs_priority_uid_filter __user*)*user_info)->err, &err, sizeof(err))) {
+		err = -EFAULT;
+	}
+	SUSFS_LOGI("CMD_SUSFS_SET_PRIORITY_UID_FILTER -> ret: %d\n", err);
+}
+
+void susfs_parse_priority_app_strings(void) {
+}
+#endif
+
+int susfs_add_sus_avd_allowed_by_type(u32 s_type, u32 t_type, u32 c_type, u32 orig_avd_allowed) {
+	return 0;
+}
+
+int susfs_add_sus_type(const char *secctx, u32 type_value) {
+	return 0;
+}
+
 /* No module exit is needed becuase it should never be a loadable kernel module */
 //void __init susfs_exit(void)
 

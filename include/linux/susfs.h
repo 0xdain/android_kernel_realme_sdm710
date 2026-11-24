@@ -190,7 +190,17 @@ struct st_susfs_version {
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 void susfs_add_sus_path(void __user **user_info);
 void susfs_add_sus_path_loop(void __user **user_info);
+void susfs_set_sus_path_uid_filter(void __user **user_info);
+void susfs_parse_sus_path_app_strings(void);
 #endif
+
+#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
+void susfs_set_priority_uid_filter(void __user **user_info);
+void susfs_parse_priority_app_strings(void);
+#endif
+
+int susfs_add_sus_avd_allowed_by_type(u32 s_type, u32 t_type, u32 c_type, u32 orig_avd_allowed);
+int susfs_add_sus_type(const char *secctx, u32 type_value);
 
 /* sus_mount */
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
